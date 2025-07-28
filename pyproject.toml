@@ -1,0 +1,68 @@
+[tool.poetry]
+name = "agno-rollback"
+version = "2.2.1"
+description = "A modern workflow resumption system built with Agno 1.7.6"
+authors = ["wangchangemichael@gmail.com"]
+readme = "README.md"
+packages = [{include = "agno_rollback", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+agno = "^1.7.6"
+pydantic = "^2.5.0"
+aiosqlite = "^0.19.0"
+asyncpg = "^0.29.0"
+python-dotenv = "^1.0.0"
+rich = "^13.7.0"  # For better console output
+typing-extensions = "^4.9.0"
+duckduckgo-search = "^8.1.1"  # Required by agno tools
+openai = "^1.0.0"  # Required by agno models
+httpx = {extras = ["socks"], version = "^0.27.0"}  # Required for SOCKS proxy support
+googlesearch-python = "^1.2.3"  # Required for Google search
+google-api-python-client = "^2.95.0"  # Required for Google search
+pycountry = "^24.6.1"  # Required for Google search
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-asyncio = "^0.21.1"
+pytest-cov = "^4.1.0"
+black = "^23.11.0"
+isort = "^5.12.0"
+mypy = "^1.7.0"
+ruff = "^0.1.6"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "C90", "I", "N", "B", "A", "S", "T", "Q", "ARG", "YTT", "ANN", "RUF"]
+ignore = ["ANN101", "ANN102"]
+target-version = "py311"
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --asyncio-mode=auto"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
