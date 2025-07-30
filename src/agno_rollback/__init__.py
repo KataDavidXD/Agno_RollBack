@@ -27,7 +27,15 @@ from .core import (
 )
 from .monitoring import WorkflowMonitor
 from .resumption import ResumptionManager, WorkflowStateAnalyzer
-from .storage import SQLiteStorage, StorageBackend
+from .storage import (
+    StorageBackend,
+    SQLiteStorage,
+    PostgresStorage,
+    ClickHouseStorage,
+    S3Storage,
+    CompositeStorage,
+    create_storage_backend,
+)
 from .workflows import RetrievalSummarizeWorkflow
 
 __version__ = "2.2.0"
@@ -43,6 +51,11 @@ __all__ = [
     # Storage
     "StorageBackend",
     "SQLiteStorage",
+    "PostgresStorage",
+    "ClickHouseStorage",
+    "S3Storage",
+    "CompositeStorage",
+    "create_storage_backend",
     # Resumption
     "ResumptionManager",
     "WorkflowStateAnalyzer",
@@ -50,6 +63,8 @@ __all__ = [
     "WorkflowMonitor",
     # Workflows
     "RetrievalSummarizeWorkflow",
+    # High-level interface
+    "WorkflowManager",
 ]
 
 
@@ -60,17 +75,29 @@ class WorkflowManager:
     def __init__(
         self,
         storage: Optional[StorageBackend] = None,
-        monitor: Optional[WorkflowMonitor] = None
+        monitor: Optional[WorkflowMonitor] = None,
+        storage_backend_type: Optional[str] = None
     ):
         """Initialize workflow manager.
         
         Args:
-            storage: Storage backend (defaults to SQLite)
+            storage: Storage backend (if not provided, creates one based on configuration)
             monitor: Workflow monitor (creates one if not provided)
+            storage_backend_type: Type of storage backend ("sqlite", "postgres", "composite")
         """
         from uuid import uuid4
         
-        self.storage = storage or SQLiteStorage()
+        # Create storage backend using factory if not provided
+        if storage is None:
+            try:
+                self.storage = create_storage_backend(storage_backend_type)
+            except Exception as e:
+                logger.warning(f"Failed to create configured storage backend: {e}")
+                logger.warning("Falling back to SQLite storage")
+                self.storage = SQLiteStorage()
+        else:
+            self.storage = storage
+        
         self.monitor = monitor or WorkflowMonitor(self.storage)
         self.resumption_manager = ResumptionManager(self.storage)
         
@@ -233,3 +260,156 @@ class WorkflowManager:
             await self.initialize()
         
         return await self.resumption_manager.get_resumption_details(UUID(task_id))
+    
+    # Enhanced methods for composite storage
+    
+    async def get_analytics(
+        self,
+        start_date=None,
+        end_date=None,
+        event_types: Optional[list] = None
+    ) -> Dict[str, Any]:
+        """Get workflow analytics (requires ClickHouse backend).
+        
+        Args:
+            start_date: Start date for analytics
+            end_date: End date for analytics
+            event_types: Optional list of event types to filter
+            
+        Returns:
+            Analytics data or empty dict if not supported
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        # Check if storage supports analytics
+        if hasattr(self.storage, 'get_event_analytics'):
+            try:
+                from datetime import datetime, timedelta
+                
+                # Default to last 7 days if no dates provided
+                if not end_date:
+                    end_date = datetime.utcnow()
+                if not start_date:
+                    start_date = end_date - timedelta(days=7)
+                
+                return await self.storage.get_event_analytics(
+                    start_date, end_date, event_types
+                )
+            except Exception as e:
+                logger.error(f"Failed to get analytics: {e}")
+                return {}
+        
+        logger.warning("Analytics not supported by current storage backend")
+        return {}
+    
+    async def get_performance_metrics(
+        self,
+        start_date=None,
+        end_date=None
+    ) -> Dict[str, Any]:
+        """Get performance metrics (requires ClickHouse backend).
+        
+        Args:
+            start_date: Start date for metrics
+            end_date: End date for metrics
+            
+        Returns:
+            Performance metrics or empty dict if not supported
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        if hasattr(self.storage, 'get_performance_analytics'):
+            try:
+                from datetime import datetime, timedelta
+                
+                # Default to last 24 hours if no dates provided
+                if not end_date:
+                    end_date = datetime.utcnow()
+                if not start_date:
+                    start_date = end_date - timedelta(hours=24)
+                
+                return await self.storage.get_performance_analytics(start_date, end_date)
+            except Exception as e:
+                logger.error(f"Failed to get performance metrics: {e}")
+                return {}
+        
+        logger.warning("Performance metrics not supported by current storage backend")
+        return {}
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Check health of all storage backends.
+        
+        Returns:
+            Health status of all storage systems
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        if hasattr(self.storage, 'health_check'):
+            try:
+                return await self.storage.health_check()
+            except Exception as e:
+                logger.error(f"Health check failed: {e}")
+                return {"error": str(e)}
+        
+        # Basic health check for simple storage backends
+        try:
+            await self.storage.get_resumable_tasks(limit=1)
+            return {"storage": {"status": "healthy"}}
+        except Exception as e:
+            return {"storage": {"status": "unhealthy", "error": str(e)}}
+    
+    def get_storage_info(self) -> Dict[str, Any]:
+        """Get information about the configured storage backend.
+        
+        Returns:
+            Storage backend information and capabilities
+        """
+        storage_type = type(self.storage).__name__
+        
+        # Enhanced info for composite storage
+        if hasattr(self.storage, 'get_backend_info'):
+            return {
+                "storage_type": storage_type,
+                **self.storage.get_backend_info()
+            }
+        
+        # Basic info for simple storage backends
+        return {
+            "storage_type": storage_type,
+            "capabilities": {
+                "transactional_operations": True,
+                "analytics": False,
+                "blob_storage": False,
+                "high_availability": storage_type != "SQLiteStorage"
+            }
+        }
+    
+    @classmethod
+    def create_development(cls) -> "WorkflowManager":
+        """Create a WorkflowManager optimized for development.
+        
+        Returns:
+            WorkflowManager with SQLite storage
+        """
+        return cls(storage_backend_type="sqlite")
+    
+    @classmethod
+    def create_production(cls) -> "WorkflowManager":
+        """Create a WorkflowManager optimized for production.
+        
+        Returns:
+            WorkflowManager with PostgreSQL or Composite storage
+        """
+        return cls(storage_backend_type="postgres")
+    
+    @classmethod
+    def create_enterprise(cls) -> "WorkflowManager":
+        """Create a WorkflowManager with full enterprise features.
+        
+        Returns:
+            WorkflowManager with Composite storage (PostgreSQL + ClickHouse + S3)
+        """
+        return cls(storage_backend_type="composite")
