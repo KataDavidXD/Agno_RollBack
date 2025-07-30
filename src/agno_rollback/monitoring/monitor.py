@@ -200,6 +200,42 @@ class WorkflowMonitor:
             return self._active_workflows[task_id]["metrics"]
         return None
     
+    async def analyze_checkpoint_status(
+        self,
+        task_id: UUID,
+        checkpoint_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Analyze checkpoint data for success statuses.
+        
+        Args:
+            task_id: Task ID
+            checkpoint_data: Checkpoint data to analyze
+            
+        Returns:
+            Dictionary with analysis results including success statuses
+        """
+        success_statuses = self._extract_success_statuses(checkpoint_data)
+        
+        analysis = {
+            "task_id": str(task_id),
+            "overall_success": all(success_statuses.values()) if success_statuses else True,
+            "component_statuses": success_statuses,
+            "failed_components": [
+                component for component, status in success_statuses.items() 
+                if not status
+            ],
+            "total_components": len(success_statuses),
+            "successful_components": len([s for s in success_statuses.values() if s])
+        }
+        
+        # Emit AGENT_SUCCESS event if there are status results
+        if success_statuses:
+            from .events import EventFactory
+            success_event = EventFactory.agent_success_status(task_id, success_statuses)
+            await self.emit_event(success_event)
+        
+        return analysis
+    
     async def _process_events(self) -> None:
         """Process events from the queue."""
         while self._running:
@@ -241,6 +277,10 @@ class WorkflowMonitor:
                 workflow["metrics"]["errors"] += 1
             elif event.event_type == EventType.CHECKPOINT_SAVED:
                 workflow["metrics"]["checkpoints"] += 1
+                # Check checkpoint data for success status
+                await self._check_checkpoint_success(event)
+            elif event.event_type == EventType.AGENT_SUCCESS:
+                workflow["metrics"]["agent_calls"] += 1
         
         # Call registered handlers
         handlers = self._event_handlers.get(event.event_type, [])
@@ -259,6 +299,84 @@ class WorkflowMonitor:
                     await self.storage.update_task(task)
             except Exception as e:
                 logger.error(f"Failed to persist event: {e}", exc_info=True)
+    
+    async def _check_checkpoint_success(self, event: MonitoringEvent) -> None:
+        """Check checkpoint data for success status and emit AGENT_SUCCESS events.
+        
+        Args:
+            event: Checkpoint saved event
+        """
+        try:
+            checkpoint_data = event.data.get("checkpoint_data", {})
+            if not checkpoint_data:
+                return
+            
+            # Check for nested success fields in various components
+            success_statuses = self._extract_success_statuses(checkpoint_data)
+            
+            if success_statuses:
+                # Emit AGENT_SUCCESS event with detailed status information
+                from .events import EventFactory
+                success_event = EventFactory.agent_success_status(
+                    event.task_id, 
+                    success_statuses
+                )
+                await self.emit_event(success_event)
+                
+                # Log detailed status information
+                failed_components = [
+                    component for component, status in success_statuses.items() 
+                    if not status
+                ]
+                if failed_components:
+                    logger.warning(
+                        f"Checkpoint {event.task_id}: Failed components detected: "
+                        f"{failed_components}"
+                    )
+                else:
+                    logger.info(
+                        f"Checkpoint {event.task_id}: All components successful"
+                    )
+                    
+        except Exception as e:
+            logger.error(f"Error checking checkpoint success status: {e}", exc_info=True)
+    
+    def _extract_success_statuses(self, checkpoint_data: Dict[str, Any]) -> Dict[str, bool]:
+        """Extract success statuses from nested checkpoint data.
+        
+        Args:
+            checkpoint_data: The checkpoint data to analyze
+            
+        Returns:
+            Dictionary mapping component names to their success status
+        """
+        success_statuses = {}
+        
+        # Check common patterns for success indicators
+        for key, value in checkpoint_data.items():
+            if isinstance(value, dict):
+                # Check for direct success field
+                if "success" in value:
+                    success_statuses[key] = bool(value["success"])
+                
+                # Check for status field
+                elif "status" in value:
+                    status = value["status"]
+                    if isinstance(status, str):
+                        success_statuses[key] = status.lower() in ["success", "completed", "ok"]
+                    elif isinstance(status, bool):
+                        success_statuses[key] = status
+                
+                # Check for error field (inverse of success)
+                elif "error" in value:
+                    success_statuses[key] = value["error"] is None or value["error"] == ""
+                
+                # Recursively check nested structures
+                nested_statuses = self._extract_success_statuses(value)
+                for nested_key, nested_status in nested_statuses.items():
+                    success_statuses[f"{key}.{nested_key}"] = nested_status
+        
+        return success_statuses
 
 
 class MonitoringContext:

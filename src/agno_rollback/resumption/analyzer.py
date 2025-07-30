@@ -53,6 +53,9 @@ class WorkflowStateAnalyzer:
         if not state:
             # Create state from task data if missing
             state = self._create_state_from_task(task)
+        else:
+            # Correct existing state based on actual success status
+            self._correct_workflow_state(task, state)
         
         # Analyze completion status
         completion_analysis = self._analyze_completion_status(task, state)
@@ -89,7 +92,15 @@ class WorkflowStateAnalyzer:
                 "tool_results": len(task.tool_results),
                 "step_results": len(task.step_results),
                 "has_web_results": task.web_retrieval_results is not None,
-                "has_news_results": task.news_retrieval_results is not None
+                "has_news_results": task.news_retrieval_results is not None,
+                "web_results_successful": (
+                    task.web_retrieval_results is not None and 
+                    task.web_retrieval_results.get("success", False)
+                ),
+                "news_results_successful": (
+                    task.news_retrieval_results is not None and 
+                    task.news_retrieval_results.get("success", False)
+                )
             }
         }
     
@@ -174,9 +185,15 @@ class WorkflowStateAnalyzer:
             last_checkpoint=task.current_step or "unknown"
         )
         
-        # Infer completion status from task data
-        state.web_retrieval_completed = task.web_retrieval_results is not None
-        state.news_retrieval_completed = task.news_retrieval_results is not None
+        # Infer completion status from task data - check for successful completion
+        state.web_retrieval_completed = (
+            task.web_retrieval_results is not None and 
+            task.web_retrieval_results.get("success", False)
+        )
+        state.news_retrieval_completed = (
+            task.news_retrieval_results is not None and 
+            task.news_retrieval_results.get("success", False)
+        )
         
         # Check if summarization was started
         for event in task.workflow_events:
@@ -187,11 +204,28 @@ class WorkflowStateAnalyzer:
         
         return state
     
+    def _correct_workflow_state(self, task: WorkflowTask, state: WorkflowState) -> None:
+        """Correct existing workflow state based on actual result success status.
+        
+        Args:
+            task: Workflow task with results
+            state: Existing workflow state to correct
+        """
+        # Correct web retrieval completion status
+        if task.web_retrieval_results is not None:
+            actual_success = task.web_retrieval_results.get("success", False)
+            state.web_retrieval_completed = actual_success
+        
+        # Correct news retrieval completion status  
+        if task.news_retrieval_results is not None:
+            actual_success = task.news_retrieval_results.get("success", False)
+            state.news_retrieval_completed = actual_success
+    
     def _analyze_completion_status(
         self,
         task: WorkflowTask,
         state: WorkflowState
-    ) -> Dict[str, bool]:
+    ) -> Dict[str, any]:
         """Analyze what parts of the workflow are completed.
         
         Args:
@@ -199,9 +233,18 @@ class WorkflowStateAnalyzer:
             state: Workflow state
             
         Returns:
-            Completion status for each component
+            Completion status and error details for each component
         """
-        return {
+        # Get error details for failed components
+        errors = {}
+        
+        if task.web_retrieval_results and not task.web_retrieval_results.get("success", False):
+            errors["web_retrieval"] = task.web_retrieval_results.get("error", "Unknown error")
+            
+        if task.news_retrieval_results and not task.news_retrieval_results.get("success", False):
+            errors["news_retrieval"] = task.news_retrieval_results.get("error", "Unknown error")
+        
+        result = {
             "initialization_completed": len(task.workflow_events) > 0,
             "web_retrieval_started": any(
                 e.event_type == "web_retrieval_started" 
@@ -219,8 +262,11 @@ class WorkflowStateAnalyzer:
             ),
             "summarization_started": state.summarization_started,
             "summarization_completed": state.summarization_completed,
-            "workflow_completed": task.status == TaskStatus.COMPLETED
+            "workflow_completed": task.status == TaskStatus.COMPLETED,
+            "_errors": errors  # Store errors separately with underscore prefix
         }
+            
+        return result
     
     def _estimate_remaining_work(
         self,

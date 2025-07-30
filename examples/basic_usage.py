@@ -85,7 +85,7 @@ async def main():
             print("\n\n📋 Example 3: Analyzing task for resumption")
             print("-" * 50)
             
-            task_to_analyze = resumable['tasks'][0]['task_id']
+            task_to_analyze = resumable['tasks'][-1]['task_id']
             analysis = await manager.analyze_task(task_to_analyze)
             
             print(f"Task ID: {task_to_analyze}")
@@ -94,8 +94,24 @@ async def main():
             
             print("\nCompletion analysis:")
             completion = analysis['resumption_analysis']['completion_analysis']
+            errors = completion.pop('_errors', {})  # Extract errors separately
+            
             for key, value in completion.items():
-                print(f"  {key}: {'✅' if value else '❌'}")
+                status_icon = '✅' if value else '❌'
+                error_info = ""
+                
+                # Add error information for failed components
+                component_name = key.replace('_completed', '').replace('_started', '')
+                if component_name in errors:
+                    error_info = f" (Error: {errors[component_name][:50]}...)" if len(errors[component_name]) > 50 else f" (Error: {errors[component_name]})"
+                
+                print(f"  {key}: {status_icon}{error_info}")
+            
+            # Show error summary if any
+            if errors:
+                print(f"\n❌ Component Errors:")
+                for component, error in errors.items():
+                    print(f"  {component}: {error}")
             
             print(f"\nRecommended resumption: {analysis['resumption_analysis']['recommended_point']}")
             print(f"Available points: {len(analysis['resumption_analysis']['available_points'])}")

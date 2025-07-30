@@ -7,13 +7,27 @@ This module defines the AI agents used in workflows:
 """
 
 from typing import List, Optional, Any
-
+import os
 from agno.agent import Agent, Toolkit
 
 
 class AgentFactory:
     """Factory for creating configured agents."""
-    
+
+    @staticmethod
+    def _default_openai_chat(model_id: str = "gpt-4o-mini"):
+        """Return a standard OpenAIChat model configured via environment variables.
+        
+        Args:
+            model_id: The model identifier (e.g., "gpt-4o-mini", "gpt-4o")
+        """
+        from agno.models.openai import OpenAIChat  # Local import to avoid heavy import cost when not needed
+        return OpenAIChat(
+            id=model_id,
+            base_url=os.getenv("BASE_URL"),
+            api_key=os.getenv("OPENAI_API_KEY"),
+        )
+
     @staticmethod
     def create_web_search_agent(
         model: Optional[Any] = None,
@@ -36,7 +50,7 @@ class AgentFactory:
         
         # Default model if not provided
         if model is None:
-            model = OpenAIChat(id="gpt-4o-mini")
+            model = AgentFactory._default_openai_chat("gpt-4o-mini")
         
         # Default tools based on search provider
         if search_provider == "google":
@@ -105,7 +119,7 @@ Return results in a structured format with:
         
         # Default model if not provided
         if model is None:
-            model = OpenAIChat(id="gpt-4o-mini")
+            model = AgentFactory._default_openai_chat("gpt-4o-mini")
         
         # Default tools
         default_tools = [HackerNewsTools()]
@@ -158,7 +172,7 @@ Return results in a structured format with:
         
         # Default model if not provided - use a more capable model for summarization
         if model is None:
-            model = OpenAIChat(id="gpt-4o")
+            model = AgentFactory._default_openai_chat("gpt-4o")
         
         return Agent(
             name=name,
@@ -210,7 +224,7 @@ Keep the tone professional and objective. Focus on providing value to the user.
         
         # Default model if not provided
         if model is None:
-            model = OpenAIChat(id="gpt-4o-mini")
+            model = AgentFactory._default_openai_chat("gpt-4o-mini")
         
         return Agent(
             name=name,

@@ -160,13 +160,15 @@ class RetrievalSummarizeWorkflow(ResumableWorkflow, ParallelRetrievalMixin):
             self.task.web_retrieval_results = results["web_results"]
             self.session_state["web_results"] = results["web_results"]
             if self.workflow_state:
-                self.workflow_state.web_retrieval_completed = True
+                # Only mark as completed if the result was successful
+                self.workflow_state.web_retrieval_completed = results["web_results"].get("success", False)
         
         if results["news_results"] and not skip_news:
             self.task.news_retrieval_results = results["news_results"]
             self.session_state["news_results"] = results["news_results"]
             if self.workflow_state:
-                self.workflow_state.news_retrieval_completed = True
+                # Only mark as completed if the result was successful
+                self.workflow_state.news_retrieval_completed = results["news_results"].get("success", False)
         
         # Save checkpoint
         await self.save_checkpoint("parallel_retrieval_completed", {

@@ -26,6 +26,7 @@ class EventType(str, Enum):
     
     # Agent events
     AGENT_STARTED = "agent_started"
+    AGENT_SUCCESS = "agent_success"
     AGENT_COMPLETED = "agent_completed"
     AGENT_FAILED = "agent_failed"
     
@@ -196,4 +197,28 @@ class EventFactory:
             step_name=step_name,
             progress=progress,
             message=message
+        )
+    
+    @staticmethod
+    def agent_success_status(
+        task_id: UUID,
+        success_statuses: Dict[str, bool]
+    ) -> MonitoringEvent:
+        """Create agent success status event from checkpoint analysis."""
+        overall_success = all(success_statuses.values()) if success_statuses else True
+        failed_components = [
+            component for component, status in success_statuses.items() 
+            if not status
+        ]
+        
+        return MonitoringEvent(
+            event_type=EventType.AGENT_SUCCESS,
+            task_id=task_id,
+            data={
+                "overall_success": overall_success,
+                "component_statuses": success_statuses,
+                "failed_components": failed_components,
+                "total_components": len(success_statuses),
+                "successful_components": len([s for s in success_statuses.values() if s])
+            }
         )
